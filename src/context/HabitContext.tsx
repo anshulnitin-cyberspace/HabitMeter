@@ -1,16 +1,16 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { Habit } from '../types';
-import { getLocalDateString, getTodayString, sortCompletions } from '../utils/dateUtils';
+import { toLocalDateString, parseLocalDate, sortCompletions } from '../utils/dateUtils';
 
 const STORAGE_KEY = 'habitmeter_data';
 
-// Initial data - strictly new schema - single source of truth
+// Initial data - strictly new schema - single source of truth via toLocalDateString
 function getInitialHabits(): Habit[] {
-  const today = getTodayString();
+  const today = toLocalDateString(new Date());
   // Created 30 days ago for meaningful completion rate demo
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const createdAtStr = getLocalDateString(thirtyDaysAgo);
+  const createdAtStr = toLocalDateString(thirtyDaysAgo);
 
   return [
     {
@@ -41,7 +41,7 @@ function normalizeHabit(raw: any): Habit {
   // Old fields: completedDates -> completions, targetFrequency -> frequency
   const completions: string[] = raw.completions ?? raw.completedDates ?? [];
   const frequency: number = raw.frequency ?? raw.targetFrequency ?? 7;
-  const createdAt: string = raw.createdAt ?? getTodayString();
+  const createdAt: string = raw.createdAt ?? toLocalDateString(new Date());
 
   return {
     id: String(raw.id),
@@ -92,25 +92,26 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [habits]);
 
   const toggleCompletion = useCallback((habitId: string, dateStr: string) => {
-    // Strict toggle using exact YYYY-MM-DD string - forces shallow copy for React re-render
+    // Sanitize - strictly run through toLocalDateString
+    const sanitizedDateStr = toLocalDateString(parseLocalDate(dateStr));
     setHabits((prev) => {
       const updated = prev.map((habit) => {
         if (habit.id !== habitId) return habit;
-        const isCompleted = habit.completions.includes(dateStr);
+        const isCompleted = habit.completions.includes(sanitizedDateStr);
         const nextCompletions = isCompleted
-          ? habit.completions.filter((d) => d !== dateStr) // filter out Today
-          : [...habit.completions, dateStr]; // push Today
+          ? habit.completions.filter((d) => d !== sanitizedDateStr)
+          : [...habit.completions, sanitizedDateStr];
         const next = sortCompletions([...new Set(nextCompletions)]);
         return { ...habit, completions: next };
       });
-      return [...updated]; // shallow copy triggers instant grid re-render
+      return [...updated];
     });
   }, []);
 
   const addHabit = useCallback((habitData: Omit<Habit, 'id' | 'createdAt' | 'completions'>) => {
     const newHabit: Habit = {
       id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      createdAt: getTodayString(),
+      createdAt: toLocalDateString(new Date()),
       completions: [],
       ...habitData,
       frequency: Math.min(7, Math.max(1, habitData.frequency)),

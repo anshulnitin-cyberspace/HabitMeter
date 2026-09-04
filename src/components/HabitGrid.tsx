@@ -1,46 +1,54 @@
 import React, { useEffect, useRef } from 'react';
-import { getTodayString, addLocalDays } from '../utils/dateUtils';
+import { toLocalDateString, addLocalDays } from '../utils/dateUtils';
 
 interface HabitGridProps {
   completions: string[];
   color: string;
+  createdAt?: string;
   isEditMode?: boolean;
   onToggleDate?: (dateStr: string) => void;
 }
 
 /**
- * Clean continuous GitHub-style grid - 7 rows fixed, expands horizontally.
- * Chronological left→right, Today at far right strict boundary - no future weeks beyond current week.
- * Read-only by default; in EditMode only last 14 days are clickable.
+ * Structurally locked GitHub-style matrix - each column = perfect Sunday(0) to Saturday(6) week.
+ * Continuous left-to-right, Today on far right column, 7 rows fixed, uniform columns.
  */
-const HabitGrid: React.FC<HabitGridProps> = ({ completions, color, isEditMode = false, onToggleDate }) => {
-  const todayStr = getTodayString();
+const HabitGrid: React.FC<HabitGridProps> = ({ completions, color, createdAt, isEditMode = false, onToggleDate }) => {
+  const todayStr = toLocalDateString(new Date());
   const cutoff = addLocalDays(todayStr, -13); // 14-day window inclusive
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // 140 days = 20 weeks - unbroken continuous timeline ending exactly on Today (far-right column = current week)
-  // No future weeks or trailing empty columns beyond Today
-  const days: string[] = Array.from({ length: 140 }).map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (139 - i));
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  });
+  // Establish Baseline: calculate exactly how many days for uniform columns
+  // Find current day of week for Today
+  const today = new Date();
+  const dayOfWeek = today.getDay(); // 0 Sun .. 6 Sat, e.g., Friday = 5 → current column has 6 days Sun-Fri
+  // Start of current week (Sunday)
+  const startOfCurrentWeek = new Date(today);
+  startOfCurrentWeek.setDate(today.getDate() - dayOfWeek);
+  // End of current week (Saturday) - ensures final column has 7 rows
+  const endOfCurrentWeek = new Date(startOfCurrentWeek);
+  endOfCurrentWeek.setDate(startOfCurrentWeek.getDate() + 6);
+  // Start 19 weeks before current week Sunday → 20 weeks total = 140 days uniform
+  const startDate = new Date(startOfCurrentWeek);
+  startDate.setDate(startOfCurrentWeek.getDate() - 19 * 7);
+
+  // Column Loop: work backward from Today to populate, every column aligns index 0=Sunday
+  const days: string[] = [];
+  const cursor = new Date(startDate);
+  while (cursor <= endOfCurrentWeek) {
+    days.push(toLocalDateString(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  // days.length === 140, 20 columns × 7 rows, Today at far-right column row = dayOfWeek
 
   const completionsSet = new Set(completions);
 
-  // Automatic scroll anchoring (snap to Today) - fires on mount, completions change, and re-entries
+  // Snap to far-right (Today) on mount / updates
   useEffect(() => {
     const el = containerRef.current;
-    if (el) {
-      // Instantly force to far-right edge so Today is immediately visible
-      el.scrollLeft = el.scrollWidth;
-    }
+    if (el) el.scrollLeft = el.scrollWidth;
   }, [completions, isEditMode]);
 
-  // Also snap on mount and when window refocuses (app re-entry)
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -56,23 +64,25 @@ const HabitGrid: React.FC<HabitGridProps> = ({ completions, color, isEditMode = 
   }, []);
 
   return (
-    <div ref={containerRef} className="overflow-x-auto scrollbar-hide pb-2 scroll-smooth">
-      <div className="grid grid-rows-7 grid-flow-col gap-1.5 min-w-max">
+    <div ref={containerRef} className="overflow-x-auto scroll-smooth scrollbar-hide pb-2">
+      <div className="grid grid-rows-7 grid-flow-col gap-[2px] min-w-max">
         {days.map((dateStr) => {
           const isCompleted = completionsSet.has(dateStr);
-          const isLocked = dateStr < cutoff; // Strict 14-day past boundary
+          const isFuture = dateStr > todayStr;
+          const isBeforeCreation = createdAt ? dateStr < createdAt : false;
+          const isLocked = dateStr < cutoff || isFuture || isBeforeCreation; // 14-day + creation lock + future
           const canEdit = isEditMode && !isLocked && !!onToggleDate;
 
           return (
             <button
               key={dateStr}
-              title={`${dateStr}${isLocked ? ' (locked - older than 14 days)' : ''}${isCompleted ? ' ✓' : ''}`}
+              title={`${dateStr}${isFuture ? ' (future)' : isLocked ? ' (locked - older than 14 days)' : ''}${isCompleted ? ' ✓' : ''}`}
               disabled={!canEdit}
               onClick={() => canEdit && onToggleDate?.(dateStr)}
               style={{
                 backgroundColor: isCompleted ? color : '#1c1c1e',
                 boxShadow: isCompleted ? `0 0 8px ${color}55` : 'none',
-                opacity: isLocked ? 0.35 : 1,
+                opacity: isLocked ? 0.3 : 1,
               }}
               className={`w-[14px] h-[14px] rounded-[3px] transition-all duration-150 ease-out will-change-transform will-change-[background-color,box-shadow]
                 ${canEdit ? 'cursor-pointer hover:scale-110 hover:brightness-110 active:scale-95' : isLocked ? 'cursor-not-allowed' : 'cursor-default'}

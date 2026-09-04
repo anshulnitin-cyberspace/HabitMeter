@@ -2,8 +2,8 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { BookOpen, Dumbbell, Flame, Trophy, Target, MoreHorizontal, Pencil, Trash2, Check } from 'lucide-react';
 import HabitGrid from './HabitGrid';
 import type { Habit } from '../types';
-import { getCurrentStreak, getLongestStreak, getCompletionRate, getCompletionsForCurrentWeek } from '../utils/habitMath';
-import { getTodayString } from '../utils/dateUtils';
+import { getCurrentStreak, getLongestStreak, getCompletionsForCurrentWeek } from '../utils/habitMath';
+import { toLocalDateString, getCalendarDaysElapsed } from '../utils/dateUtils';
 import { ICON_OPTIONS } from './HabitModal';
 
 interface HabitCardProps {
@@ -27,19 +27,37 @@ const IconRenderer = ({ iconName, color }: { iconName: string; color: string }) 
 };
 
 const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggleDate, onEdit, onDelete }) => {
-  const { currentStreak, longestStreak, completionRate, weeklyCount, isTodayCompleted } = useMemo(() => {
-    const todayStr = getTodayString();
+  console.log('CURRENT_HABIT_DATA:', habit);
+  const { currentStreak, longestStreak, consistencyPercentage, weeklyCount, isTodayCompleted } = useMemo(() => {
+    const todayStr = toLocalDateString(new Date());
+    // 1. Calculate Tracked History Window - DST-proof via getCalendarDaysElapsed (V-1/V-2)
+    const daysElapsed = getCalendarDaysElapsed(habit.createdAt, todayStr);
+    const safeDays = daysElapsed <= 0 ? 1 : daysElapsed; // tampering fallback (V-5/V-6)
+    const trackableDaysCount = Math.min(14, safeDays);
+
+    // 3. Synced Consistency Formula - only within 14-day interactable window and not before creation
+    const validCompletionsInWindow = habit.completions.filter((dateStr) => {
+      const date = new Date(dateStr + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diffTime = today.getTime() - date.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      return diffDays >= 0 && diffDays < 14 && dateStr >= habit.createdAt;
+    }).length;
+    const consistencyPercentage = trackableDaysCount > 0 ? Math.round((validCompletionsInWindow / trackableDaysCount) * 100) : 0;
+
     return {
       currentStreak: getCurrentStreak(habit.completions),
       longestStreak: getLongestStreak(habit.completions),
-      completionRate: getCompletionRate(habit.completions, habit.createdAt),
+      consistencyPercentage,
       weeklyCount: getCompletionsForCurrentWeek(habit.completions),
       isTodayCompleted: habit.completions.includes(todayStr),
     };
   }, [habit.completions, habit.createdAt]);
 
   const handleIconClick = () => {
-    const todayStr = getTodayString();
+    const actionTimestamp = new Date(); // Execution Snapshot Pattern (V-4)
+    const todayStr = toLocalDateString(actionTimestamp);
     onToggleDate(habit.id, todayStr);
   };
 
@@ -89,10 +107,11 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggleDate, onEdit, onDe
   }, [menuOpen]);
 
   const handleGridToggle = useCallback((dateStr: string) => {
-    // Grid toggle only allowed in EditMode, and only past 14 days (handled also in HabitGrid)
     if (!isEditMode) return;
+    // 2. Prevent Editing Before Creation Date
+    if (dateStr < habit.createdAt) return;
     onToggleDate(habit.id, dateStr);
-  }, [isEditMode, onToggleDate, habit.id]);
+  }, [isEditMode, onToggleDate, habit.id, habit.createdAt]);
 
   return (
     <>
@@ -171,7 +190,7 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggleDate, onEdit, onDe
               <div className="text-right">
                 <p className="text-white font-medium text-lg flex items-center gap-1 justify-end">
                   <Target size={14} className="text-zinc-500" />
-                  {completionRate.toFixed(0)}%
+                  {consistencyPercentage}%
                 </p>
                 <p className="text-zinc-500 text-xs">
                   {weeklyCount} / {habit.frequency}/wk
@@ -214,7 +233,7 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggleDate, onEdit, onDe
             <Target size={14} className="text-zinc-400" /> {weeklyCount}/{habit.frequency}
           </span>
           <span className="inline-flex items-center gap-1.5 bg-white/5 border border-white/5 px-2.5 py-1 rounded-full text-zinc-400">
-            {completionRate.toFixed(0)}%
+            {consistencyPercentage}%
           </span>
         </div>
 
@@ -227,6 +246,7 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggleDate, onEdit, onDe
           <HabitGrid
             completions={habit.completions}
             color={habit.color}
+            createdAt={habit.createdAt}
             isEditMode={isEditMode}
             onToggleDate={handleGridToggle}
           />

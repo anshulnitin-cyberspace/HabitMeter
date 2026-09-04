@@ -2,5 +2,9 @@
   "appId": "com.anshu.habitkitclone",
   "appName": "HabitKit Clone",
   "webDir": "dist",
-  "backgroundColor": "#000000"
+  "backgroundColor": "#000000",
+  "server": {
+    "url": "http://192.168.0.124:5173",
+    "cleartext": true
+  }
 }
