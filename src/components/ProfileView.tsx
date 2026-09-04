@@ -21,6 +21,8 @@ function isValidHabit(obj: any): boolean {
 }
 
 function normalizeHabit(raw: any): Habit {
+  // DoS Array Capping: prevent main-thread freezing from 100k completions
+  const rawCompletions: string[] = Array.isArray(raw.completions) ? raw.completions.slice(0, 5000) : [];
   return {
     id: String(raw.id),
     name: String(raw.name),
@@ -29,7 +31,7 @@ function normalizeHabit(raw: any): Habit {
     icon: String(raw.icon),
     frequency: Math.min(7, Math.max(1, Number(raw.frequency))),
     createdAt: String(raw.createdAt),
-    completions: sortCompletions([...new Set((raw.completions as string[]).filter((d: any) => typeof d === 'string'))]),
+    completions: sortCompletions([...new Set(rawCompletions.filter((d: any) => typeof d === 'string'))]),
   };
 }
 
@@ -117,7 +119,7 @@ const ProfileView: React.FC = () => {
     }
   };
 
-  // 2. Restored File Import Logic - hidden file input, schema validation, custom Toast
+  // 2. Restored File Import Logic - hidden file input, schema validation, custom Toast (Anti-Pollution & DoS Patch)
   const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -126,7 +128,7 @@ const ProfileView: React.FC = () => {
     reader.onload = async (e) => {
       try {
         const content = e.target?.result as string;
-        const parsedData = JSON.parse(content);
+        const parsedData = JSON.parse(content, (k, v) => (k === '__proto__' || k === 'constructor' || k === 'prototype') ? undefined : v);
 
         // Validate basic habit schema array
         if (!Array.isArray(parsedData)) {

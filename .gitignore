@@ -36,3 +36,7 @@ android/.idea/
 
 # System
 Thumbs.db
+
+# APK - release assets (attach via GitHub Releases, not repo)
+*.apk
+HabitMeter-*.apk

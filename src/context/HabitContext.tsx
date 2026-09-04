@@ -36,10 +36,10 @@ function getInitialHabits(): Habit[] {
   ];
 }
 
-// Migration helper: handle old schema persisted data
+// Migration helper: handle old schema persisted data (Anti-Pollution & DoS Patch)
 function normalizeHabit(raw: any): Habit {
   // Old fields: completedDates -> completions, targetFrequency -> frequency
-  const completions: string[] = raw.completions ?? raw.completedDates ?? [];
+  const rawCompletions: string[] = Array.isArray(raw.completions ?? raw.completedDates) ? (raw.completions ?? raw.completedDates).slice(0, 5000) : [];
   const frequency: number = raw.frequency ?? raw.targetFrequency ?? 7;
   const createdAt: string = raw.createdAt ?? toLocalDateString(new Date());
 
@@ -51,7 +51,7 @@ function normalizeHabit(raw: any): Habit {
     icon: String(raw.icon),
     frequency: Number(frequency),
     createdAt: String(createdAt),
-    completions: sortCompletions([...new Set(completions.filter((d: any) => typeof d === 'string'))]),
+    completions: sortCompletions([...new Set(rawCompletions.filter((d: any) => typeof d === 'string'))]),
   };
 }
 
@@ -60,7 +60,7 @@ function loadHabits(): Habit[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return getInitialHabits();
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw, (k, v) => (k === '__proto__' || k === 'constructor' || k === 'prototype') ? undefined : v);
     if (!Array.isArray(parsed)) return getInitialHabits();
     return parsed.map(normalizeHabit);
   } catch {
@@ -81,13 +81,18 @@ const HabitContext = createContext<HabitContextValue | null>(null);
 
 export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [habits, setHabits] = useState<Habit[]>(() => loadHabits());
+  const [storageToast, setStorageToast] = useState<string | null>(null);
 
-  // Persist to localStorage whenever habits change
+  // Persist to localStorage whenever habits change - Atomic & Quota Fallback (Concurrency Patch)
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(habits));
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to persist habits', e);
+      if (e?.name === 'QuotaExceededError' || e?.code === 22 || e?.message?.includes('QuotaExceeded') || e?.message?.includes('exceeded')) {
+        setStorageToast('Storage quota exceeded. Please clear space or delete old habits.');
+        setTimeout(() => setStorageToast(null), 3000);
+      }
     }
   }, [habits]);
 
@@ -132,6 +137,15 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <HabitContext.Provider value={{ habits, toggleCompletion, addHabit, updateHabit, deleteHabit, setHabits }}>
       {children}
+      {storageToast && (
+        <div className="fixed bottom-28 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-auto z-50 flex justify-center pointer-events-none">
+          <div className="pointer-events-auto min-w-[280px] max-w-[90vw] md:max-w-md px-4 py-3 rounded-xl border shadow-2xl flex items-center gap-3 bg-[#000000] border-neutral-800">
+            <div className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+            <p className="text-sm font-medium flex-1 text-[#f87171]">{storageToast}</p>
+            <button onClick={() => setStorageToast(null)} className="text-zinc-500 hover:text-white text-xs shrink-0">✕</button>
+          </div>
+        </div>
+      )}
     </HabitContext.Provider>
   );
 };
