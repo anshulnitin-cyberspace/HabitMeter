@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+/* === CAPACITOR / AMOLED BLACK THEME - LOCKED #000000 === */
+:root {
+  color-scheme: dark;
+}
+
+html {
+  background-color: #000000;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: #000000;
+  color: #ffffff;
+  overscroll-behavior: none;
+  /* Safe area base */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  min-height: 100dvh;
+  /* Prevent pull-to-refresh / bounce white flash */
+  position: relative;
+}
+
+#root {
+  background-color: #000000;
+  min-height: 100dvh;
+  overscroll-behavior: none;
+}
+
+/* Native Mobile UI Adjustments */
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* Re-enable selection for inputs where needed */
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Disable overscroll bounce */
+html, body {
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Safe area utility helpers */
+.safe-pt {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-pb {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-pl {
+  padding-left: env(safe-area-inset-left);
+}
+.safe-pr {
+  padding-right: env(safe-area-inset-right);
+}
