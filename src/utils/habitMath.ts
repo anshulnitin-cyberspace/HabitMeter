@@ -49,6 +49,19 @@ export function getLongestStreak(completions: string[]): number {
   return longest;
 }
 
+export const isStrictValidDate = (dateString: string): boolean => {
+  const regex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!regex.test(dateString)) return false;
+  
+  const [y, m, d] = dateString.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  
+  // Ensure the date didn't auto-roll into the next month
+  return date.getFullYear() === y && 
+         date.getMonth() === m - 1 && 
+         date.getDate() === d;
+};
+
 /**
  * Absolute Lifetime Consistency Engine - Bulletproof (spec exact)
  * Fixes totalDaysElapsed evaluating to 1/0 due to parsing error

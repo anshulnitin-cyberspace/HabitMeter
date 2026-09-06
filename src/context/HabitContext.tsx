@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { Habit } from '../types';
 import { toLocalDateString, parseLocalDate, sortCompletions } from '../utils/dateUtils';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { Preferences } from '@capacitor/preferences';
+import { getCurrentStreak } from '../utils/habitMath';
 
 const STORAGE_KEY = 'habitmeter_data';
 
@@ -36,19 +39,32 @@ function getInitialHabits(): Habit[] {
   ];
 }
 
-// Migration helper: handle old schema persisted data (Anti-Pollution & DoS Patch)
+// Migration helper: handle old schema persisted data (Anti-Pollution & DoS Patch + hasOwnProperty)
 function normalizeHabit(raw: any): Habit {
-  // Old fields: completedDates -> completions, targetFrequency -> frequency
-  const rawCompletions: string[] = Array.isArray(raw.completions ?? raw.completedDates) ? (raw.completions ?? raw.completedDates).slice(0, 5000) : [];
-  const frequency: number = raw.frequency ?? raw.targetFrequency ?? 7;
-  const createdAt: string = raw.createdAt ?? toLocalDateString(new Date());
+  // Use hasOwnProperty to prevent prototype pollution via Object.create(null)
+  const hasCompletions = Object.prototype.hasOwnProperty.call(raw, 'completions');
+  const hasCompletedDates = Object.prototype.hasOwnProperty.call(raw, 'completedDates');
+  const rawCompletions: string[] = Array.isArray(hasCompletions ? raw.completions : hasCompletedDates ? raw.completedDates : null)
+    ? ((hasCompletions ? raw.completions : raw.completedDates) as string[]).slice(0, 5000)
+    : [];
+  const hasFrequency = Object.prototype.hasOwnProperty.call(raw, 'frequency');
+  const hasTargetFrequency = Object.prototype.hasOwnProperty.call(raw, 'targetFrequency');
+  const frequency: number = hasFrequency ? raw.frequency : hasTargetFrequency ? raw.targetFrequency : 7;
+  const hasCreatedAt = Object.prototype.hasOwnProperty.call(raw, 'createdAt');
+  const createdAt: string = hasCreatedAt ? raw.createdAt : toLocalDateString(new Date());
+
+  const hasId = Object.prototype.hasOwnProperty.call(raw, 'id');
+  const hasName = Object.prototype.hasOwnProperty.call(raw, 'name');
+  if (!hasId || !hasName) {
+    // Fallback to prevent crash on polluted object without own id/name
+  }
 
   return {
-    id: String(raw.id),
-    name: String(raw.name),
-    description: raw.description ? String(raw.description) : undefined,
-    color: String(raw.color),
-    icon: String(raw.icon),
+    id: String(hasId ? raw.id : ''),
+    name: String(hasName ? raw.name : 'Untitled'),
+    description: Object.prototype.hasOwnProperty.call(raw, 'description') && typeof raw.description === 'string' ? String(raw.description) : undefined,
+    color: Object.prototype.hasOwnProperty.call(raw, 'color') ? String(raw.color) : '#3b82f6',
+    icon: Object.prototype.hasOwnProperty.call(raw, 'icon') ? String(raw.icon) : 'book',
     frequency: Number(frequency),
     createdAt: String(createdAt),
     completions: sortCompletions([...new Set(rawCompletions.filter((d: any) => typeof d === 'string'))]),
@@ -70,6 +86,7 @@ function loadHabits(): Habit[] {
 
 interface HabitContextValue {
   habits: Habit[];
+  isLoading: boolean;
   toggleCompletion: (habitId: string, dateStr: string) => void;
   addHabit: (habit: Omit<Habit, 'id' | 'createdAt' | 'completions'>) => void;
   updateHabit: (id: string, patch: Partial<Omit<Habit, 'id' | 'completions' | 'createdAt'>>) => void;
@@ -81,24 +98,53 @@ const HabitContext = createContext<HabitContextValue | null>(null);
 
 export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [habits, setHabits] = useState<Habit[]>(() => loadHabits());
+  const [isLoading, setIsLoading] = useState(true);
   const [storageToast, setStorageToast] = useState<string | null>(null);
 
-  // Persist to localStorage whenever habits change - Atomic & Quota Fallback (Concurrency Patch)
+  // Skeleton loading - prevent jarring flash with 200ms delay
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(habits));
-    } catch (e: any) {
-      console.error('Failed to persist habits', e);
-      if (e?.name === 'QuotaExceededError' || e?.code === 22 || e?.message?.includes('QuotaExceeded') || e?.message?.includes('exceeded')) {
-        setStorageToast('Storage quota exceeded. Please clear space or delete old habits.');
-        setTimeout(() => setStorageToast(null), 3000);
+    const t = setTimeout(() => setIsLoading(false), 200);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Persist to localStorage whenever habits change - Pseudo-atomic + Quota Fallback + Widget Bridge
+  useEffect(() => {
+    const saveData = () => {
+      try {
+        const json = JSON.stringify(habits);
+        // Pseudo-atomic write: write to temp, overwrite main, delete temp
+        localStorage.setItem(`${STORAGE_KEY}_tmp`, json);
+        localStorage.setItem(STORAGE_KEY, json);
+        localStorage.removeItem(`${STORAGE_KEY}_tmp`);
+      } catch (e: any) {
+        if (e.name === 'QuotaExceededError') {
+          setStorageToast('Storage quota exceeded. Please export your data to clear space.');
+          setTimeout(() => setStorageToast(null), 3000);
+        } else {
+          // Log message only to prevent absolute path URI leaks
+          console.error('Storage write failed:', e.message);
+        }
       }
-    }
+      // Mirror to native storage for widget (non-blocking)
+      (async () => {
+        try {
+          await Preferences.set({ key: 'widget_habits_data', value: JSON.stringify(habits) });
+        } catch (e: any) {
+          console.error('Failed to sync widget data:', (e as any)?.message);
+        }
+      })();
+    };
+
+    // Debounce the write to prevent blocking the UI thread during rapid toggles
+    const timeoutId = setTimeout(saveData, 300);
+    return () => clearTimeout(timeoutId);
   }, [habits]);
 
   const toggleCompletion = useCallback((habitId: string, dateStr: string) => {
     // Sanitize - strictly run through toLocalDateString
     const sanitizedDateStr = toLocalDateString(parseLocalDate(dateStr));
+    // Haptic Light on toggle
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
     setHabits((prev) => {
       const updated = prev.map((habit) => {
         if (habit.id !== habitId) return habit;
@@ -107,6 +153,11 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           ? habit.completions.filter((d) => d !== sanitizedDateStr)
           : [...habit.completions, sanitizedDateStr];
         const next = sortCompletions([...new Set(nextCompletions)]);
+        const wasStreak = getCurrentStreak(habit.completions);
+        const willStreak = getCurrentStreak(next);
+        if (willStreak > wasStreak && (willStreak === 7 || willStreak === 30 || willStreak % 30 === 0)) {
+          Haptics.notification({ type: 'SUCCESS' } as any).catch(() => Haptics.impact({ style: ImpactStyle.Heavy }).catch(() => {}));
+        }
         return { ...habit, completions: next };
       });
       return [...updated];
@@ -131,11 +182,12 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const deleteHabit = useCallback((id: string) => {
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
     setHabits((prev) => prev.filter((h) => h.id !== id));
   }, []);
 
   return (
-    <HabitContext.Provider value={{ habits, toggleCompletion, addHabit, updateHabit, deleteHabit, setHabits }}>
+    <HabitContext.Provider value={{ habits, isLoading, toggleCompletion, addHabit, updateHabit, deleteHabit, setHabits }}>
       {children}
       {storageToast && (
         <div className="fixed bottom-28 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-auto z-50 flex justify-center pointer-events-none">

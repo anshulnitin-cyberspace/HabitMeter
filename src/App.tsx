@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, LayoutGrid, BarChart3, User, HardDrive } from 'lucide-react';
 import HabitCard from './components/HabitCard';
+import HabitCardSkeleton from './components/HabitCardSkeleton';
 import HabitModal from './components/HabitModal';
 import AnalyticsView from './components/AnalyticsView';
 import ProfileView from './components/ProfileView';
@@ -17,7 +18,25 @@ const DashboardView: React.FC<{
   onOpenCreate: () => void;
   onEdit: (h: Habit) => void;
 }> = ({ onOpenCreate, onEdit }) => {
-  const { habits, toggleCompletion, deleteHabit } = useHabits();
+  const { habits, isLoading, toggleCompletion, deleteHabit } = useHabits();
+  if (isLoading) {
+    return (
+      <>
+        <header className="max-w-2xl mx-auto mb-10 mt-4 md:mt-10 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
+            <p className="text-zinc-500 mt-2 text-sm">Track your daily progress.</p>
+          </div>
+          <div className="w-10 h-10 rounded-full bg-[#1c1c1e] animate-pulse shrink-0 mt-1" />
+        </header>
+        <main className="flex flex-col gap-6 max-w-2xl mx-auto pb-24">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <HabitCardSkeleton key={i} />
+          ))}
+        </main>
+      </>
+    );
+  }
   return (
     <>
       <header className="max-w-2xl mx-auto mb-10 mt-4 md:mt-10 flex items-start justify-between gap-4">

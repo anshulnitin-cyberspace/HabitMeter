@@ -2,5 +2,6 @@
   "appId": "com.habitmeter.app",
   "appName": "HabitMeter",
   "webDir": "dist",
+  "bundledWebRuntime": false,
   "backgroundColor": "#000000"
 }

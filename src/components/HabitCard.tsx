@@ -4,6 +4,7 @@ import HabitGrid from './HabitGrid';
 import type { Habit } from '../types';
 import { getCurrentStreak, getLongestStreak, getCompletionsForCurrentWeek } from '../utils/habitMath';
 import { toLocalDateString, getCalendarDaysElapsed } from '../utils/dateUtils';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { ICON_OPTIONS } from './HabitModal';
 
 interface HabitCardProps {
@@ -58,6 +59,7 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggleDate, onEdit, onDe
   const handleIconClick = () => {
     const actionTimestamp = new Date(); // Execution Snapshot Pattern (V-4)
     const todayStr = toLocalDateString(actionTimestamp);
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
     onToggleDate(habit.id, todayStr);
   };
 

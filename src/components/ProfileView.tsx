@@ -1,22 +1,25 @@
-import React, { useRef, useState, useCallback } from 'react';
-import { Download, Upload, Trash2, ShieldAlert, HardDrive, Info } from 'lucide-react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { Download, Upload, Trash2, ShieldAlert, HardDrive, Info, Bell } from 'lucide-react';
 import { useHabits, STORAGE_KEY } from '../context/HabitContext';
 import { sortCompletions } from '../utils/dateUtils';
+import { isStrictValidDate } from '../utils/habitMath';
 import type { Habit } from '../types';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 function isValidHabit(obj: any): boolean {
   if (!obj || typeof obj !== 'object') return false;
-  if (typeof obj.id !== 'string' || obj.id.trim() === '') return false;
-  if (typeof obj.name !== 'string' || obj.name.trim() === '') return false;
+  if (!Object.prototype.hasOwnProperty.call(obj, 'id') || typeof obj.id !== 'string' || obj.id.trim() === '') return false;
+  if (!Object.prototype.hasOwnProperty.call(obj, 'name') || typeof obj.name !== 'string' || obj.name.trim() === '') return false;
   if (typeof obj.color !== 'string' || !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(obj.color)) return false;
   if (typeof obj.icon !== 'string' || obj.icon.trim() === '') return false;
   if (typeof obj.frequency !== 'number' || obj.frequency < 1 || obj.frequency > 7) return false;
-  if (typeof obj.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(obj.createdAt)) return false;
+  if (typeof obj.createdAt !== 'string' || !isStrictValidDate(obj.createdAt)) return false;
   if (!Array.isArray(obj.completions)) return false;
-  if (!obj.completions.every((d: any) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))) return false;
+  if (!obj.completions.every((d: any) => typeof d === 'string' && isStrictValidDate(d))) return false;
   return true;
 }
 
@@ -43,11 +46,94 @@ const ProfileView: React.FC = () => {
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [reminderTime, setReminderTime] = useState('20:00');
+  const [isReminderEnabled, setIsReminderEnabled] = useState(false);
 
   const showCustomToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  useEffect(() => {
+    const savedTime = localStorage.getItem('habitmeter_reminder_time');
+    const savedEnabled = localStorage.getItem('habitmeter_reminder_enabled');
+    if (savedTime) setReminderTime(savedTime);
+    if (savedEnabled) setIsReminderEnabled(savedEnabled === 'true');
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('habitmeter_reminder_time', reminderTime);
+  }, [reminderTime]);
+
+  useEffect(() => {
+    localStorage.setItem('habitmeter_reminder_enabled', String(isReminderEnabled));
+  }, [isReminderEnabled]);
+
+  const configureNotifications = useCallback(async (isEnabled: boolean, timeStr: string) => {
+    try {
+      await LocalNotifications.cancel({ notifications: [{ id: 1 }] });
+      if (!isEnabled) {
+        showCustomToast('Daily reminder disabled', 'success');
+        return;
+      }
+      if (Capacitor.isNativePlatform()) {
+        let permStatus = await LocalNotifications.checkPermissions();
+        if (permStatus.display !== 'granted') {
+          permStatus = await LocalNotifications.requestPermissions();
+          if (permStatus.display !== 'granted') {
+            setIsReminderEnabled(false);
+            showCustomToast('Notification permission blocked by OS.', 'error');
+            return;
+          }
+        }
+        try {
+          const exactStatus: any = await (LocalNotifications as any).checkExactNotificationSetting();
+          if (exactStatus.exact_alarm === 'denied') {
+            await (LocalNotifications as any).changeExactNotificationSetting();
+            setIsReminderEnabled(false);
+            showCustomToast('Please enable Alarms & Reminders to set schedules.', 'error');
+            return;
+          }
+        } catch (exactErr) {
+          console.warn('Exact alarm check not supported on this device/version:', exactErr);
+        }
+        await LocalNotifications.createChannel({
+          id: 'daily_reminders',
+          name: 'Daily Reminders',
+          description: 'Reminders to complete your habits',
+          importance: 4,
+          visibility: 1,
+        });
+      }
+      const [hourStr, minuteStr] = timeStr.split(':');
+      const hour = parseInt(hourStr, 10);
+      const minute = parseInt(minuteStr, 10);
+      if (isNaN(hour) || isNaN(minute)) throw new Error('Time parsing resulted in NaN');
+      await (LocalNotifications as any).schedule({
+        notifications: [{
+          id: 1,
+          title: 'HabitMeter',
+          body: 'Time to complete your daily habits!',
+          channelId: 'daily_reminders',
+          allowWhileIdle: true,
+          presentationOptions: ["badge", "sound", "alert"],
+          schedule: { on: { hour, minute } },
+        }]
+      });
+      showCustomToast(`Daily reminder set for ${timeStr}`, 'success');
+    } catch (error: any) {
+      console.error('Notification Engine Failure Detail:', error);
+      const errorMsg = error?.message || 'Unknown native error';
+      setIsReminderEnabled(false);
+      showCustomToast(`Failed: ${errorMsg.substring(0, 40)}`, 'error');
+    }
+  }, [showCustomToast]);
+
+  const hasMountedRef = React.useRef(false);
+  useEffect(() => {
+    if (!hasMountedRef.current) { hasMountedRef.current = true; return; }
+    configureNotifications(isReminderEnabled, reminderTime);
+  }, [isReminderEnabled, reminderTime, configureNotifications]);
 
   const handleExportBackup = async () => {
     const fileName = `habitmeter_backup_${new Date().toISOString().split('T')[0]}.json`;
@@ -166,6 +252,42 @@ const ProfileView: React.FC = () => {
         <div className="pt-4 md:pt-6 pb-6">
           <h1 className="text-3xl font-bold text-white tracking-tight">Profile</h1>
           <p className="text-zinc-500 mt-2 text-sm">Manage data and app settings.</p>
+        </div>
+
+        {/* SETTINGS - Daily Reminder */}
+        <div className="bg-black border border-neutral-900 rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-neutral-900">
+            <h2 className="text-xs font-semibold tracking-widest uppercase text-zinc-500">Settings</h2>
+          </div>
+          <div className="px-4 py-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+              <Bell size={16} className="text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white font-medium text-sm">Daily Reminder</p>
+              <p className="text-zinc-500 text-xs">Daily push notification</p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <input
+                type="time"
+                value={reminderTime}
+                onChange={(e) => setReminderTime(e.target.value)}
+                className="bg-transparent text-white outline-none text-sm border border-white/10 rounded-lg px-2 py-1.5 focus:border-white/20"
+                style={{ colorScheme: 'dark' } as React.CSSProperties}
+              />
+              <button
+                onClick={() => {
+                  Haptics.impact({ style: isReminderEnabled ? ImpactStyle.Light : ImpactStyle.Medium }).catch(() => {});
+                  setIsReminderEnabled(!isReminderEnabled);
+                }}
+                aria-label={isReminderEnabled ? 'Disable daily reminder' : 'Enable daily reminder'}
+                aria-pressed={isReminderEnabled}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isReminderEnabled ? 'bg-white' : 'bg-[#1c1c1e] border border-white/10'}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full transition ${isReminderEnabled ? 'translate-x-6 bg-black' : 'translate-x-1 bg-zinc-500'}`} />
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="bg-black border border-neutral-900 rounded-2xl overflow-hidden">
@@ -292,6 +414,8 @@ const ProfileView: React.FC = () => {
               <button
                 onClick={() => {
                   if (confirmText !== 'RESET') return;
+                  Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
+                  Haptics.notification({ type: 'WARNING' } as any).catch(() => {});
                   localStorage.removeItem(STORAGE_KEY);
                   setHabits([]);
                   setConfirmReset(false);
