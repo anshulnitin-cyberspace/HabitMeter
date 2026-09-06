@@ -293,7 +293,6 @@ const ProfileView: React.FC = () => {
                 onClick={() => {
                   if (confirmText !== 'RESET') return;
                   localStorage.removeItem(STORAGE_KEY);
-                  localStorage.removeItem('habitkit_clone_data');
                   setHabits([]);
                   setConfirmReset(false);
                   setConfirmText('');

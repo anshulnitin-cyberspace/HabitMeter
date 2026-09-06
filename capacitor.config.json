@@ -1,6 +1,6 @@
 {
-  "appId": "com.anshu.habitkitclone",
-  "appName": "HabitKit Clone",
+  "appId": "com.habitmeter.app",
+  "appName": "HabitMeter",
   "webDir": "dist",
   "backgroundColor": "#000000"
 }
