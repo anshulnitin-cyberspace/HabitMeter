@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, LayoutGrid, BarChart3, User, HardDrive } from 'lucide-react';
+import { Plus, Search, LayoutGrid, BarChart3, User, HardDrive } from 'lucide-react';
 import HabitCard from './components/HabitCard';
 import HabitCardSkeleton from './components/HabitCardSkeleton';
 import HabitModal from './components/HabitModal';
 import AnalyticsView from './components/AnalyticsView';
 import ProfileView from './components/ProfileView';
+import CommandPalette from './components/CommandPalette';
 import { HabitProvider, useHabits } from './context/HabitContext';
 import type { Habit } from './types';
-import { Filesystem } from '@capacitor/filesystem';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
 import { requestNativeStoragePermission } from './utils/permissionUtils';
 
@@ -16,9 +18,22 @@ type Tab = 'dashboard' | 'analytics' | 'profile';
 // Dashboard module - preserves right-anchored grids + long-press edit handlers
 const DashboardView: React.FC<{
   onOpenCreate: () => void;
+  onOpenCommandPalette: () => void;
   onEdit: (h: Habit) => void;
-}> = ({ onOpenCreate, onEdit }) => {
-  const { habits, isLoading, toggleCompletion, deleteHabit } = useHabits();
+}> = ({ onOpenCreate, onOpenCommandPalette, onEdit }) => {
+  const { habits, isLoading, toggleCompletion, deleteHabit, markAllComplete, markAllIncomplete } = useHabits();
+  // Pull down to search gesture
+  const pullStartY = React.useRef<number | null>(null);
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (window.scrollY === 0) pullStartY.current = e.touches[0].clientY;
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (pullStartY.current !== null && e.touches[0].clientY - pullStartY.current > 60) {
+      pullStartY.current = null;
+      onOpenCommandPalette();
+    }
+  };
+  const handleTouchEnd = () => { pullStartY.current = null; };
   if (isLoading) {
     return (
       <>
@@ -26,6 +41,7 @@ const DashboardView: React.FC<{
           <div>
             <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
             <p className="text-zinc-500 mt-2 text-sm">Track your daily progress.</p>
+            <p className="text-zinc-600 mt-1 text-xs">(Long-press card to edit history • Tap icon to toggle Today)</p>
           </div>
           <div className="w-10 h-10 rounded-full bg-[#1c1c1e] animate-pulse shrink-0 mt-1" />
         </header>
@@ -39,20 +55,53 @@ const DashboardView: React.FC<{
   }
   return (
     <>
-      <header className="max-w-2xl mx-auto mb-10 mt-4 md:mt-10 flex items-start justify-between gap-4">
+      <header
+        className="max-w-2xl mx-auto mb-10 mt-4 md:mt-10 flex items-start justify-between gap-4"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
         <div>
           <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
           <p className="text-zinc-500 mt-2 text-sm">Track your daily progress.</p>
+          <p className="text-zinc-600 mt-1 text-xs">(Long-press card to edit history • Tap icon to toggle Today)</p>
         </div>
-        <button
-          onClick={onOpenCreate}
-          aria-label="Create new habit"
-          className="w-10 h-10 rounded-full bg-white text-black hover:bg-zinc-200 flex items-center justify-center transition-all duration-150 active:scale-95 shadow-lg shrink-0 mt-1"
-          style={{ WebkitTapHighlightColor: 'transparent' }}
-        >
-          <Plus size={20} />
-        </button>
+        <div className="flex items-center gap-2 shrink-0 mt-1">
+          <button
+            onClick={onOpenCommandPalette}
+            aria-label="Open command palette"
+            className="w-10 h-10 rounded-full bg-[#1c1c1e] border border-white/10 text-white hover:bg-white/10 flex items-center justify-center transition-all active:scale-95"
+            style={{ WebkitTapHighlightColor: 'transparent' }}
+          >
+            <Search size={18} />
+          </button>
+          <button
+            onClick={onOpenCreate}
+            aria-label="Create new habit"
+            className="w-10 h-10 rounded-full bg-white text-black hover:bg-zinc-200 flex items-center justify-center transition-all duration-150 active:scale-95 shadow-lg"
+            style={{ WebkitTapHighlightColor: 'transparent' }}
+          >
+            <Plus size={20} />
+          </button>
+        </div>
       </header>
+
+      {habits.length > 0 && (
+        <div className="max-w-2xl mx-auto mb-4 flex gap-2">
+          <button
+            onClick={markAllComplete}
+            className="flex-1 py-2.5 rounded-xl bg-white text-black text-sm font-medium hover:bg-zinc-200 transition-colors active:scale-95 flex items-center justify-center gap-1.5"
+          >
+            ✓ Mark all complete
+          </button>
+          <button
+            onClick={markAllIncomplete}
+            className="flex-1 py-2.5 rounded-xl bg-[#1c1c1e] border border-white/10 text-white text-sm font-medium hover:bg-white/10 transition-colors active:scale-95 flex items-center justify-center gap-1.5"
+          >
+            ✕ Mark all incomplete
+          </button>
+        </div>
+      )}
 
       <main className="flex flex-col gap-6 max-w-2xl mx-auto pb-24">
         {habits.map((habit) => (
@@ -114,11 +163,15 @@ const BottomTabBar: React.FC<{ active: Tab; onChange: (t: Tab) => void }> = ({ a
 };
 
 const AppShell: React.FC = () => {
-  const { addHabit, updateHabit } = useHabits();
+  const { habits, setHabits, addHabit, updateHabit } = useHabits();
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [showBootPermissionModal, setShowBootPermissionModal] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const importFileRef = React.useRef<HTMLInputElement>(null);
+  const [toast, setToast] = React.useState<{message:string;type:'success'|'error'}|null>(null);
+  const showToast = (m:string,t:'success'|'error')=>{ setToast({message:m,type:t}); setTimeout(()=>setToast(null),3000); };
 
   const openCreate = () => { setEditingHabit(null); setModalOpen(true); };
   const openEdit = (h: Habit) => { setEditingHabit(h); setModalOpen(true); };
@@ -148,17 +201,85 @@ const AppShell: React.FC = () => {
     setShowBootPermissionModal(false);
   };
 
+  const handlePaletteExport = async () => {
+    const fileName = `habitmeter_backup_${new Date().toISOString().split('T')[0]}.json`;
+    const jsonString = JSON.stringify(habits, null, 2);
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await Filesystem.writeFile({ path: fileName, data: jsonString, directory: Directory.Cache, encoding: Encoding.UTF8 });
+        const uriResult = await Filesystem.getUri({ path: fileName, directory: Directory.Cache });
+        await Share.share({ title: 'HabitMeter Backup', dialogTitle: 'Export Backup File', files: [uriResult.uri] });
+        showToast('Export process initiated', 'success');
+      } else {
+        const blob = new Blob([jsonString], {type:'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a=document.createElement('a'); a.href=url; a.download=fileName;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+        showToast('Backup file downloaded', 'success');
+      }
+    } catch (e:any) {
+      const errStr = JSON.stringify(e)?.toLowerCase()||'';
+      if (errStr.includes('canceled')||errStr.includes('cancelled')||errStr.includes('dismissed')) return;
+      try {
+        if (Capacitor.isNativePlatform()) {
+          await Share.share({ title: 'HabitMeter Backup Data', text: jsonString, dialogTitle: 'Export Backup Data' });
+          showToast('Backup data shared as text', 'success'); return;
+        }
+      } catch {}
+      showToast('Failed to export backup file.', 'error');
+    }
+  };
+
+  const handlePaletteImport = () => { importFileRef.current?.click(); };
+  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const content = ev.target?.result as string;
+        const parsed = JSON.parse(content, (k,v)=> k==='__proto__'||k==='constructor'||k==='prototype'?undefined:v);
+        if (!Array.isArray(parsed)) throw new Error('Invalid schema');
+        const tight = parsed.filter((h:any)=> h && typeof h.id==='string' && typeof h.name==='string' && typeof h.createdAt==='string');
+        if (parsed.length>0 && tight.length===0) throw new Error('Invalid backup');
+        setHabits(tight);
+        localStorage.setItem('habitmeter_data', JSON.stringify(tight));
+        showToast('Backup restored successfully!', 'success');
+      } catch (err) { showToast('Invalid backup file. Import failed.', 'error'); }
+      finally { e.target.value = ''; }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="min-h-screen bg-[#000000] selection:bg-zinc-800 font-sans safe-pt" style={{ overscrollBehavior: 'none' }}>
       <div className="p-6 md:p-12 pb-0">
         {activeTab === 'dashboard' && (
-          <DashboardView onOpenCreate={openCreate} onEdit={openEdit} />
+          <DashboardView onOpenCreate={openCreate} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} onEdit={openEdit} />
         )}
         {activeTab === 'analytics' && <AnalyticsView />}
         {activeTab === 'profile' && <ProfileView />}
       </div>
 
       <BottomTabBar active={activeTab} onChange={setActiveTab} />
+
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onCreateHabit={openCreate}
+        onExportBackup={handlePaletteExport}
+        onImportBackup={handlePaletteImport}
+        onNavigate={(tab) => setActiveTab(tab)}
+      />
+      <input ref={importFileRef} type="file" accept=".json" id="import-file-input" onChange={handleFileImport} className="hidden" />
+      {toast && (
+        <div className="fixed bottom-28 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 z-50 flex justify-center pointer-events-none">
+          <div className={`pointer-events-auto min-w-[280px] px-4 py-3 rounded-xl border shadow-2xl flex items-center gap-3 ${toast.type==='success'?'bg-[#09090b] border-neutral-800':'bg-[#000000] border-neutral-800'}`}>
+            <div className={`w-2 h-2 rounded-full ${toast.type==='success'?'bg-emerald-500':'bg-red-500'}`} />
+            <p className={`text-sm font-medium flex-1 ${toast.type==='success'?'text-[#f4f4f5]':'text-[#f87171]'}`}>{toast.message}</p>
+            <button onClick={()=>setToast(null)} className="text-zinc-500 text-xs">✕</button>
+          </div>
+        </div>
+      )}
 
       <HabitModal isOpen={modalOpen} onClose={closeModal} onSave={handleSave} habit={editingHabit} />
 

@@ -253,9 +253,6 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggleDate, onEdit, onDe
             onToggleDate={handleGridToggle}
           />
         </div>
-        {!isEditMode && (
-          <p className="text-[11px] text-zinc-600 text-center">Long-press card to edit history • Tap icon to toggle Today</p>
-        )}
       </div>
 
       {confirmDelete && (

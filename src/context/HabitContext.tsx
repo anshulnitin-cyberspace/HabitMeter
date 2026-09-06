@@ -3,6 +3,7 @@ import type { Habit } from '../types';
 import { toLocalDateString, parseLocalDate, sortCompletions } from '../utils/dateUtils';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Preferences } from '@capacitor/preferences';
+import { App } from '@capacitor/app';
 import { getCurrentStreak } from '../utils/habitMath';
 
 const STORAGE_KEY = 'habitmeter_data';
@@ -88,6 +89,8 @@ interface HabitContextValue {
   habits: Habit[];
   isLoading: boolean;
   toggleCompletion: (habitId: string, dateStr: string) => void;
+  markAllComplete: () => void;
+  markAllIncomplete: () => void;
   addHabit: (habit: Omit<Habit, 'id' | 'createdAt' | 'completions'>) => void;
   updateHabit: (id: string, patch: Partial<Omit<Habit, 'id' | 'completions' | 'createdAt'>>) => void;
   deleteHabit: (id: string) => void;
@@ -107,21 +110,27 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearTimeout(t);
   }, []);
 
-  // Persist to localStorage whenever habits change - Pseudo-atomic + Quota Fallback + Widget Bridge
+  // Persist to localStorage whenever habits change - Pseudo-atomic + Quota Fallback + Widget Bridge + Suspension Flush
   useEffect(() => {
     const saveData = () => {
       try {
         const json = JSON.stringify(habits);
-        // Pseudo-atomic write: write to temp, overwrite main, delete temp
+        // Pseudo-atomic write prevents truncation if the process dies mid-write
         localStorage.setItem(`${STORAGE_KEY}_tmp`, json);
         localStorage.setItem(STORAGE_KEY, json);
         localStorage.removeItem(`${STORAGE_KEY}_tmp`);
       } catch (e: any) {
         if (e.name === 'QuotaExceededError') {
-          setStorageToast('Storage quota exceeded. Please export your data to clear space.');
+          setStorageToast('Storage quota exceeded. Reverting changes.');
           setTimeout(() => setStorageToast(null), 3000);
+          // Force memory to match disk, clearing the Medium desync vulnerability
+          const lastValidState = localStorage.getItem(STORAGE_KEY);
+          if (lastValidState) {
+            try {
+              setHabits(JSON.parse(lastValidState, (k, v) => (k === '__proto__' || k === 'constructor' || k === 'prototype') ? undefined : v));
+            } catch {}
+          }
         } else {
-          // Log message only to prevent absolute path URI leaks
           console.error('Storage write failed:', e.message);
         }
       }
@@ -135,9 +144,33 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })();
     };
 
-    // Debounce the write to prevent blocking the UI thread during rapid toggles
     const timeoutId = setTimeout(saveData, 300);
-    return () => clearTimeout(timeoutId);
+
+    // Flushes the write instantly if the user swipes home before 300ms elapses
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        clearTimeout(timeoutId);
+        saveData();
+      }
+    };
+
+    // Capacitor-specific lifecycle hook for deeper Android OS suspension
+    const appStateListener = App.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) {
+        clearTimeout(timeoutId);
+        saveData();
+      }
+    });
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', saveData);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', saveData);
+      appStateListener.then(listener => listener.remove());
+    };
   }, [habits]);
 
   const toggleCompletion = useCallback((habitId: string, dateStr: string) => {
@@ -186,8 +219,30 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setHabits((prev) => prev.filter((h) => h.id !== id));
   }, []);
 
+  const markAllComplete = useCallback(() => {
+    const todayStr = toLocalDateString(new Date());
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
+    setHabits((prev) =>
+      prev.map((h) => {
+        if (h.completions.includes(todayStr)) return h;
+        return { ...h, completions: sortCompletions([...h.completions, todayStr]) };
+      })
+    );
+  }, []);
+
+  const markAllIncomplete = useCallback(() => {
+    const todayStr = toLocalDateString(new Date());
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    setHabits((prev) =>
+      prev.map((h) => {
+        if (!h.completions.includes(todayStr)) return h;
+        return { ...h, completions: h.completions.filter((d) => d !== todayStr) };
+      })
+    );
+  }, []);
+
   return (
-    <HabitContext.Provider value={{ habits, isLoading, toggleCompletion, addHabit, updateHabit, deleteHabit, setHabits }}>
+    <HabitContext.Provider value={{ habits, isLoading, toggleCompletion, markAllComplete, markAllIncomplete, addHabit, updateHabit, deleteHabit, setHabits }}>
       {children}
       {storageToast && (
         <div className="fixed bottom-28 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-auto z-50 flex justify-center pointer-events-none">
