@@ -44,9 +44,7 @@ HabitMeter is a **1:1 HabitKit-inspired** habit tracker built with **React + Cap
 
 | Dashboard | Analytics | Profile |
 |-----------|-----------|---------|
-| ![Dashboard](https://via.placeholder.com/270x600/000000/FFFFFF?text=Dashboard) | ![Analytics](https://via.placeholder.com/270x600/000000/FFFFFF?text=Analytics) | ![Profile](https://via.placeholder.com/270x600/000000/FFFFFF?text=Profile) |
-
-> Replace placeholders with real screenshots in `docs/screenshots/` and update paths.
+| ![Dashboard](docs/screenshots/Dashboard.jpeg) | ![Analytics](docs/screenshots/Analytics.png) | ![Profile](docs/screenshots/Profile.jpeg) |
 
 ## 🛠️ Tech Stack
 
