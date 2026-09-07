@@ -46,3 +46,5 @@ const HabitCardSkeleton: React.FC = () => {
 };
 
 export default HabitCardSkeleton;
+
+

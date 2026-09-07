@@ -8,3 +8,5 @@ export interface Habit {
   createdAt: string; // 'YYYY-MM-DD' representing local creation date
   completions: string[]; // Array of unique 'YYYY-MM-DD' strings, sorted chronologically
 }
+
+

@@ -97,3 +97,5 @@ const HabitGrid: React.FC<HabitGridProps> = ({ completions, color, createdAt, is
 };
 
 export default HabitGrid;
+
+

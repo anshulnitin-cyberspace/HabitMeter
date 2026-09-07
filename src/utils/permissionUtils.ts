@@ -35,3 +35,5 @@ export const requestNativeStoragePermission = async (): Promise<boolean> => {
     return false;
   }
 };
+
+
